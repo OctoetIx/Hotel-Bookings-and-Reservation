@@ -4,10 +4,16 @@ import { jwtVerify, type JWTPayload } from "jose";
 
 const secret = new TextEncoder().encode(process.env.JWT_SECRET!);
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const token = request.cookies.get("token")?.value;
   const pathname = request.nextUrl.pathname;
 
+  // Only protect /admin routes
+  if (!pathname.startsWith("/admin")) {
+    return NextResponse.next();
+  }
+
+  // No token → redirect
   if (!token) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
@@ -18,8 +24,8 @@ export async function middleware(request: NextRequest) {
       secret
     );
 
+    // Role-based access
     if (
-      pathname.startsWith("/admin") &&
       payload.role !== "ADMIN" &&
       payload.role !== "SUPER_ADMIN"
     ) {
@@ -31,8 +37,3 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 }
-
-export const config = {
-  matcher: ["/admin/:path*"],
-};
- 
