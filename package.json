@@ -1,0 +1,23 @@
+{
+  "name": "clear",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/OctoetIx/Hotel-Bookings-and-Reservation#readme",
+  "bugs": {
+    "url": "https://github.com/OctoetIx/Hotel-Bookings-and-Reservation/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OctoetIx/Hotel-Bookings-and-Reservation.git"
+  },
+  "license": "ISC",
+  "author": "Zindum",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10"
+  }
+}
