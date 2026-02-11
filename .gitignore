@@ -32,6 +32,7 @@ go.work.sum
 /client/.env
 /server/.env
 .env
+/client/node_modules/
 
 # ========================
 # Logs and temporary files
