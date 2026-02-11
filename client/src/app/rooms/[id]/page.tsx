@@ -3,29 +3,15 @@
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import Navbar from "@/components/Navbar";
+import { ROOMS } from "@/data/rooms";
+import type { Room } from "@/types/rooms";
 
-const ROOMS = [
-  {
-    id: "1",
-    name: "Standard Room",
-    price: 35000,
-    guests: 2,
-    description: "Comfortable room with modern amenities.",
-    image: "/room1.jpg",
-  },
-  {
-    id: "2",
-    name: "Deluxe Room",
-    price: 55000,
-    guests: 3,
-    description: "Spacious deluxe room with premium comfort.",
-    image: "/room2.jpg",
-  },
-];
 
 export default function RoomDetailsPage() {
-  const { id } = useParams();
-  const room = ROOMS.find((r) => r.id === id);
+
+  const params = useParams();
+  const id = params?.id as string;
+  const room = ROOMS.find(r => r.id === id);
 
   if (!room) {
     return <p className="pt-32 text-center">Room not found</p>;
@@ -47,6 +33,7 @@ export default function RoomDetailsPage() {
 
         <h1 className="mt-6 text-3xl font-semibold">{room.name}</h1>
         <p className="mt-2 text-neutral-600">{room.description}</p>
+        <p className="mt-2 text-neutral-600" >{room.amenities}</p>
 
         <div className="mt-4 flex justify-between items-center">
           <p className="text-xl font-bold">

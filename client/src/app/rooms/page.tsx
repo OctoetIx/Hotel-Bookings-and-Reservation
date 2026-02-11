@@ -3,38 +3,10 @@
 import { useState } from "react";
 import Navbar from "@/components/Navbar";
 import Image from "next/image";
+import { ROOMS } from "@/data/rooms";
+import type { Room } from "@/types/rooms";
+import Link from "next/link";
 
-type Room = {
-  id: number;
-  name: string;
-  price: number;
-  guests: number;
-  image: string;
-};
-
-const ROOMS: Room[] = [
-  {
-    id: 1,
-    name: "Standard Room",
-    price: 35000,
-    guests: 2,
-    image: "/room1.jpg",
-  },
-  {
-    id: 2,
-    name: "Deluxe Room",
-    price: 55000,
-    guests: 3,
-    image: "/room2.jpg",
-  },
-  {
-    id: 3,
-    name: "Executive Suite",
-    price: 95000,
-    guests: 4,
-    image: "/room3.jpg",
-  },
-];
 
 export default function RoomsPage() {
   const [search, setSearch] = useState("");
@@ -109,17 +81,19 @@ export default function RoomsPage() {
                     {room.name}
                   </h3>
                   <p className="text-sm text-neutral-600">
-                    Up to {room.guests} guests
+                    Up to {room.capacity} guests
                   </p>
 
                   <div className="mt-4 flex items-center justify-between">
                     <p className="font-semibold">
                       ₦{room.price.toLocaleString()} / night
                     </p>
-
+                  <Link href={`/rooms/${room.id}`}>
+                  
                     <button className="rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-800">
                       Book now
                     </button>
+                  </Link>
                   </div>
                 </div>
               </div>

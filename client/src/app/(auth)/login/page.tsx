@@ -6,6 +6,7 @@ import { AxiosError } from "axios";
 import Link from "next/link";
 import Image from "next/image";
 import api from "@/lib/api";
+import Navbar from "@/components/Navbar";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -46,6 +47,7 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen">
+      <Navbar />
       {/* Background image */}
       <Image
         src="/hotel.jpg"

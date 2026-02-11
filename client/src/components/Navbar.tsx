@@ -17,13 +17,13 @@ export default function Navbar() {
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm">
-            <Link href="rooms" className="hover:text-neutral-600">
+            <Link href="/rooms" className="hover:text-neutral-600">
               Rooms
             </Link>
-            <Link href="features" className="hover:text-neutral-600">
+            <Link href="/features" className="hover:text-neutral-600">
               Features
             </Link>
-            <Link href="contact" className="hover:text-neutral-600">
+            <Link href="/contact" className="hover:text-neutral-600">
               Contact
             </Link>
 

@@ -6,6 +6,8 @@ import { AxiosError } from "axios";
 import Link from "next/link";
 import api from "@/lib/api";
 import Image from "next/image";
+import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 
 const getPasswordStrength = (password: string) => {
   let score = 0;
@@ -62,6 +64,7 @@ export default function RegisterPage() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center">
+      <Navbar />
       {/* Full-page background image */}
       <Image
         src="/hotel.jpg"
@@ -177,6 +180,7 @@ export default function RegisterPage() {
           </p>
         </form>
       </div>
+      <Footer />
     </div>
   );
 }
