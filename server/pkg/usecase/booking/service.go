@@ -15,26 +15,35 @@ import (
 )
 
 type Service struct {
-	repo          booking.Repository
-	tracer        trace.Tracer
-	roomRepo      room.Repository
-	redisLocker   *redis.RedisLocker
-	Client        *goredis.Client
+	repo        booking.Repository
+	tracer      trace.Tracer
+	roomRepo    room.Repository
+	locker      *redis.RedisLocker
+	redisClient *goredis.Client
 }
 
-func NewService(repo booking.Repository, roomRepo room.Repository, locker *redis.RedisLocker, client *goredis.Client) *Service {
+func NewService(
+	repo booking.Repository,
+	roomRepo room.Repository,
+	locker *redis.RedisLocker,
+	client *goredis.Client,
+) *Service {
 	return &Service{
 		repo:        repo,
 		tracer:      otel.Tracer("booking-service"),
 		roomRepo:    roomRepo,
-		redisLocker: locker,
-		Client:      client,
+		locker:      locker,
+		redisClient: client,
 	}
 }
 
-func (s *Service) AvailabilityKey(roomID uint, date time.Time) string {
+func (s *Service) availabilityKey(roomID uint, date time.Time) string {
 	return fmt.Sprintf("availability:%d:%s", roomID, date.Format("2006-01-02"))
 }
+
+/* =========================
+   CREATE BOOKING
+========================= */
 
 func (s *Service) CreateBooking(ctx context.Context, b *booking.Booking) error {
 
@@ -53,9 +62,10 @@ func (s *Service) CreateBooking(ctx context.Context, b *booking.Booking) error {
 
 	return s.withRoomLock(ctx, b.RoomID, func() error {
 
-		err := s.repo.WithTransaction(func(tx booking.Repository) error {
+		err := s.repo.WithTransaction(ctx, func(tx booking.Repository) error {
 
 			existing, err := tx.FindOverlappingBookings(
+				ctx,
 				b.RoomID,
 				b.CheckInDate,
 				b.CheckOutDate,
@@ -68,36 +78,36 @@ func (s *Service) CreateBooking(ctx context.Context, b *booking.Booking) error {
 				return errors.New("room already booked for selected dates")
 			}
 
-			return tx.Create(b)
+			return tx.Create(ctx, b)
 		})
-
 		if err != nil {
 			return err
 		}
 
-		pipe := s.Client.Pipeline()
+		// cache occupancy
+		pipe := s.redisClient.Pipeline()
 
 		for d := b.CheckInDate; d.Before(b.CheckOutDate); d = d.AddDate(0, 0, 1) {
-			key := s.AvailabilityKey(b.RoomID, d)
+			key := s.availabilityKey(b.RoomID, d)
 			pipe.Set(ctx, key, "1", 24*time.Hour)
 		}
 
-		if _, err := pipe.Exec(ctx); err != nil {
-			return err
-		}
-
-		return nil
+		_, err = pipe.Exec(ctx)
+		return err
 	})
 }
+
+/* =========================
+   CONFIRM BOOKING
+========================= */
 
 func (s *Service) ConfirmBooking(ctx context.Context, bookingID uint) error {
 
 	ctx, span := s.tracer.Start(ctx, "ConfirmBooking")
 	defer span.End()
 
-	b, err := s.repo.FindByID(bookingID)
+	b, err := s.repo.FindByID(ctx, bookingID)
 	if err != nil {
-		span.RecordError(err)
 		return err
 	}
 
@@ -114,18 +124,20 @@ func (s *Service) ConfirmBooking(ctx context.Context, bookingID uint) error {
 	}
 
 	b.Status = booking.BookingStatusConfirmed
-
-	return s.repo.Update(b)
+	return s.repo.Update(ctx, b)
 }
+
+/* =========================
+   CANCEL BOOKING
+========================= */
 
 func (s *Service) CancelBooking(ctx context.Context, bookingID uint) error {
 
 	ctx, span := s.tracer.Start(ctx, "CancelBooking")
 	defer span.End()
 
-	b, err := s.repo.FindByID(bookingID)
+	b, err := s.repo.FindByID(ctx, bookingID)
 	if err != nil {
-		span.RecordError(err)
 		return err
 	}
 
@@ -137,61 +149,54 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID uint) error {
 
 		b.Cancel()
 
-		if err := s.repo.Update(b); err != nil {
+		if err := s.repo.Update(ctx, b); err != nil {
 			return err
 		}
 
-		pipe := s.Client.Pipeline()
+		pipe := s.redisClient.Pipeline()
 
 		for d := b.CheckInDate; d.Before(b.CheckOutDate); d = d.AddDate(0, 0, 1) {
-			key := s.AvailabilityKey(b.RoomID, d)
+			key := s.availabilityKey(b.RoomID, d)
 			pipe.Set(ctx, key, "0", 24*time.Hour)
 		}
 
-		if _, err := pipe.Exec(ctx); err != nil {
-			return err
-		}
-
-		return nil
+		_, err := pipe.Exec(ctx)
+		return err
 	})
 }
 
-func (s *Service) ListBookings(ctx context.Context, page, limit int) ([]booking.Booking, int64, error) {
-	ctx, span := s.tracer.Start(ctx, "ListBookings")
-	defer span.End()
+/* =========================
+   LIST / GET
+========================= */
 
+func (s *Service) ListBookings(ctx context.Context, page, limit int) ([]booking.Booking, int64, error) {
 	return s.repo.List(ctx, page, limit)
 }
 
 func (s *Service) GetBookingByID(ctx context.Context, id uint) (*booking.Booking, error) {
-	ctx, span := s.tracer.Start(ctx, "GetBookingByID")
-	defer span.End()
-
-	return s.repo.FindByID(id)
+	return s.repo.FindByID(ctx, id)
 }
 
 func (s *Service) GetBookingsByUserID(ctx context.Context, userID uint, page, limit int) ([]booking.Booking, int64, error) {
-	ctx, span := s.tracer.Start(ctx, "GetBookingsByUserID")
-	defer span.End()
-
 	return s.repo.FindByUser(ctx, userID, page, limit)
 }
 
+/* =========================
+   CONFIRM PAYMENT
+========================= */
+
 func (s *Service) ConfirmPaymentAndBooking(ctx context.Context, bookingID uint) error {
 
-	ctx, span := s.tracer.Start(ctx, "ConfirmPaymentAndBooking")
-	defer span.End()
-
-	// get booking first to know roomID
-	b, err := s.repo.FindByID(bookingID)
+	b, err := s.repo.FindByID(ctx, bookingID)
 	if err != nil {
 		return err
 	}
 
 	return s.withRoomLock(ctx, b.RoomID, func() error {
-		return s.repo.WithTransaction(func(txRepo booking.Repository) error {
 
-			b, err := txRepo.FindByID(bookingID)
+		return s.repo.WithTransaction(ctx, func(tx booking.Repository) error {
+
+			b, err := tx.FindByID(ctx, bookingID)
 			if err != nil {
 				return err
 			}
@@ -207,25 +212,30 @@ func (s *Service) ConfirmPaymentAndBooking(ctx context.Context, bookingID uint) 
 			b.PaymentStatus = booking.PaymentStatusCompleted
 			b.Status = booking.BookingStatusConfirmed
 
-			return txRepo.Update(b)
+			return tx.Update(ctx, b)
 		})
 	})
 }
 
-func (s *Service) CheckRoomAvailability(ctx context.Context, roomID uint, checkIn, checkOut time.Time) (bool, error) {
+/* =========================
+   AVAILABILITY
+========================= */
+
+func (s *Service) CheckRoomAvailability(
+	ctx context.Context,
+	roomID uint,
+	checkIn, checkOut time.Time,
+) (bool, error) {
 
 	if !checkIn.Before(checkOut) {
 		return false, errors.New("invalid booking dates")
 	}
 
-	ctx, span := s.tracer.Start(ctx, "CheckRoomAvailability")
-	defer span.End()
-
-	pipe := s.Client.Pipeline()
-	cmds := make([]*goredis.StringCmd, 0)
+	pipe := s.redisClient.Pipeline()
+	cmds := []*goredis.StringCmd{}
 
 	for d := checkIn; d.Before(checkOut); d = d.AddDate(0, 0, 1) {
-		cmds = append(cmds, pipe.Get(ctx, s.AvailabilityKey(roomID, d)))
+		cmds = append(cmds, pipe.Get(ctx, s.availabilityKey(roomID, d)))
 	}
 
 	_, err := pipe.Exec(ctx)
@@ -234,15 +244,12 @@ func (s *Service) CheckRoomAvailability(ctx context.Context, roomID uint, checkI
 	}
 
 	for _, cmd := range cmds {
-		if cmd.Err() != nil && cmd.Err() != goredis.Nil {
-			return false, cmd.Err()
-		}
 		if cmd.Err() == nil && cmd.Val() == "1" {
 			return false, nil
 		}
 	}
 
-	bookings, err := s.repo.FindOverlappingBookings(roomID, checkIn, checkOut)
+	bookings, err := s.repo.FindOverlappingBookings(ctx, roomID, checkIn, checkOut)
 	if err != nil {
 		return false, err
 	}
@@ -255,22 +262,22 @@ func (s *Service) CheckRoomAvailability(ctx context.Context, roomID uint, checkI
 	}
 
 	for d := checkIn; d.Before(checkOut); d = d.AddDate(0, 0, 1) {
-		s.Client.Set(ctx, s.AvailabilityKey(roomID, d), val, 10*time.Minute)
+		s.redisClient.Set(ctx, s.availabilityKey(roomID, d), val, 10*time.Minute)
 	}
 
 	return available, nil
 }
 
-func (s *Service) ExpireBookings(ctx context.Context) error {
+/* =========================
+   EXPIRE BOOKINGS
+========================= */
 
-	ctx, span := s.tracer.Start(ctx, "ExpireBookings")
-	defer span.End()
+func (s *Service) ExpireBookings(ctx context.Context) error {
 
 	now := time.Now()
 
-	bookings, err := s.repo.FindExpiredBookings(now)
+	bookings, err := s.repo.FindExpiredBookings(ctx, now)
 	if err != nil {
-		span.RecordError(err)
 		return err
 	}
 
@@ -280,7 +287,7 @@ func (s *Service) ExpireBookings(ctx context.Context) error {
 		if b.Status == booking.BookingStatusPending {
 			b.Status = booking.BookingStatusCancelled
 
-			if err := s.repo.Update(b); err != nil {
+			if err := s.repo.Update(ctx, b); err != nil {
 				return err
 			}
 		}
@@ -289,13 +296,21 @@ func (s *Service) ExpireBookings(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) withRoomLock(ctx context.Context, roomID uint, fn func() error) error {
+/* =========================
+   LOCK HELPER
+========================= */
+
+func (s *Service) withRoomLock(
+	ctx context.Context,
+	roomID uint,
+	fn func() error,
+) error {
 
 	var unlock func()
 	var err error
 
 	for i := 0; i < 3; i++ {
-		unlock, err = s.redisLocker.LockResource(ctx, "room", roomID, 5*time.Second)
+		unlock, err = s.locker.LockResource(ctx, "room", fmt.Sprintf("%d", roomID), 5*time.Second)
 		if err == nil {
 			break
 		}

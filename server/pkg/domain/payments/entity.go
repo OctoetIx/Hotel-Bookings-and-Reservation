@@ -1,23 +1,32 @@
-package models
+package payment
 
-import (
-	"time"
-	"gorm.io/gorm"
-	"github.com/OctoetIx/Hotel-Bookings-and-Reservation/pkg/domain/common"
+import "time"
+
+type PaymentStatus string
+
+const (
+	PaymentPending   PaymentStatus = "PENDING"
+	PaymentCompleted PaymentStatus = "COMPLETED"
+	PaymentFailed    PaymentStatus = "FAILED"
+	PaymentRefunded  PaymentStatus = "REFUNDED"
 )
 
+type PaymentMethod string
+
+const (
+	MethodCard     PaymentMethod = "CARD"
+	MethodBank     PaymentMethod = "BANK"
+	MethodTransfer PaymentMethod = "TRANSFER"
+)
 type Payment struct {
-	gorm.Model
-
-	BookingID uint `gorm:"uniqueIndex;not null"`
-
-	Amount int64 `gorm:"not null"` // store in kobo
-
-	Status common.PaymentStatus `gorm:"type:varchar(20);default:'PENDING'"`
-
-	TransactionRef string `gorm:"uniqueIndex"`
-
-	PaymentDate time.Time
-
-	Booking common.BookingStatus `gorm:"foreignKey:BookingID"`
+	ID		uint
+	BookingID	uint
+	Reference string
+	Amount  float64
+	Method PaymentMethod
+	Status PaymentStatus
+	Provider string
+	PaidAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

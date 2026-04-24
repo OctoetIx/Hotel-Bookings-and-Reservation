@@ -2,24 +2,23 @@ package booking
 
 import (
 	"context"
-	
 	"time"
 
 	"gorm.io/gorm"
 )
 
 type Repository interface {
-	Create(*Booking) error
-	Update(*Booking) error
-	Delete(uint) error
+	Create(ctx context.Context, b *Booking) error
+	Update(ctx context.Context, b *Booking) error
+	Delete(ctx context.Context, id uint) error
 
-	FindByID(uint) (*Booking, error)
+	FindByID(ctx context.Context, id uint) (*Booking, error)
 
 	List(ctx context.Context, page, limit int) ([]Booking, int64, error)
 
 	FindAll(
-		status *PaymentStatus,
 		ctx context.Context,
+		status *PaymentStatus,
 		page int,
 		limit int,
 	) ([]Booking, int64, error)
@@ -31,27 +30,27 @@ type Repository interface {
 		limit int,
 	) ([]Booking, int64, error)
 
-	FindByRoomID(roomID uint) ([]Booking, error)
+	FindByRoomID(ctx context.Context, roomID uint) ([]Booking, error)
 
 	FindOverlappingBookings(
+		ctx context.Context,
 		roomID uint,
 		checkIn time.Time,
 		checkOut time.Time,
 	) ([]Booking, error)
 
-	UpdatePaymentStatus(id uint, status PaymentStatus) error
+	UpdatePaymentStatus(ctx context.Context, id uint, status PaymentStatus) error
 
 	UpdatePaymentStatusTx(
+		ctx context.Context,
 		tx *gorm.DB,
 		id uint,
 		status PaymentStatus,
 	) error
 
-	LockRoom(roomID uint) error
+	LockRoom(ctx context.Context, roomID uint) error
 
-	WithTransaction(fn func(tx Repository) error) error
+	WithTransaction(ctx context.Context, fn func(tx Repository) error) error
 
-	
-
-	FindExpiredBookings(now time.Time) ([]Booking, error)
+	FindExpiredBookings(ctx context.Context, now time.Time) ([]Booking, error)
 }

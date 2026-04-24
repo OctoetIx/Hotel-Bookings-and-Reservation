@@ -23,14 +23,13 @@ func NewBookingRepository(db *gorm.DB) *BookingRepository {
 	return &BookingRepository{db: db}
 }
 
-func (r *BookingRepository) Create(booking *domain.Booking) error {
+func (r *BookingRepository) Create(ctx context.Context, booking *domain.Booking) error {
 	model := toModel(booking)
 
-	if err := r.db.Create(model).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(model).Error; err != nil {
 		return err
 	}
 
-	// copy generated fields back
 	booking.ID = model.ID
 	booking.CreatedAt = model.CreatedAt
 	booking.UpdatedAt = model.UpdatedAt
@@ -38,9 +37,9 @@ func (r *BookingRepository) Create(booking *domain.Booking) error {
 	return nil
 }
 
-func (r *BookingRepository) Update(b *domain.Booking) error {
-
-	return r.db.Model(&models.Booking{}).
+func (r *BookingRepository) Update(ctx context.Context, b *domain.Booking) error {
+	return r.db.WithContext(ctx).
+		Model(&models.Booking{}).
 		Where("id = ?", b.ID).
 		Updates(map[string]interface{}{
 			"status":         string(b.Status),
@@ -50,13 +49,13 @@ func (r *BookingRepository) Update(b *domain.Booking) error {
 		}).Error
 }
 
-func (r *BookingRepository) Delete(id uint) error {
-	return r.db.Delete(&models.Booking{}, id).Error
+func (r *BookingRepository) Delete(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Delete(&models.Booking{}, id).Error
 }
 
-func (r *BookingRepository) FindByID(id uint) (*domain.Booking, error) {
+func (r *BookingRepository) FindByID(ctx context.Context, id uint) (*domain.Booking, error) {
 	var m models.Booking
-	if err := r.db.First(&m, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).First(&m, id).Error; err != nil {
 		return nil, err
 	}
 	return toDomain(&m), nil
@@ -107,13 +106,15 @@ func (r *BookingRepository) List(ctx context.Context, page, limit int) ([]domain
 	query := r.db.Model(&models.Booking{})
 	return r.queryBookings(ctx, query, page, limit)
 }
+
+
 func (r *BookingRepository) FindAll(
-	status *domain.PaymentStatus,
 	ctx context.Context,
+	status *domain.PaymentStatus,
 	page, limit int,
 ) ([]domain.Booking, int64, error) {
 
-	query := r.db.Model(&models.Booking{})
+	query := r.db.WithContext(ctx).Model(&models.Booking{})
 
 	if status != nil {
 		query = query.Where("payment_status = ?", string(*status))
@@ -121,6 +122,8 @@ func (r *BookingRepository) FindAll(
 
 	return r.queryBookings(ctx, query, page, limit)
 }
+
+
 func (r *BookingRepository) FindByUser(
 	ctx context.Context,
 	userID uint,
@@ -135,65 +138,95 @@ func (r *BookingRepository) FindByUser(
 }
 
 
-func (r *BookingRepository) FindByRoomID(roomID uint) ([]domain.Booking, error) {
+func (r *BookingRepository) FindByRoomID(ctx context.Context, roomID uint) ([]domain.Booking, error) {
 	var modelList []models.Booking
-	err := r.db.Where("room_id = ?", roomID).Find(&modelList).Error
+
+	err := r.db.WithContext(ctx).
+		Where("room_id = ?", roomID).
+		Find(&modelList).Error
 	if err != nil {
 		return nil, err
 	}
-	
-var result []domain.Booking
-for i := range modelList {
-	result = append(result, *toDomain(&modelList[i]))	
-}
-return result, nil 
-}
 
-func (r *BookingRepository) FindOverlappingBookings(roomID uint, checkIn, checkOut time.Time) ([]domain.Booking, error) {
+	result := make([]domain.Booking, 0, len(modelList))
+	for i := range modelList {
+		result = append(result, *toDomain(&modelList[i]))
+	}
+
+	return result, nil
+}
+func (r *BookingRepository) FindOverlappingBookings(
+	ctx context.Context,
+	roomID uint,
+	checkIn, checkOut time.Time,
+) ([]domain.Booking, error) {
+
 	var modelList []models.Booking
-	err := r.db.Where("room_id = ? AND check_in_date < ? AND check_out_date > ?", roomID, checkOut, checkIn).Find(&modelList).Error
+
+	err := r.db.WithContext(ctx).
+		Where("room_id = ? AND check_in_date < ? AND check_out_date > ?", roomID, checkOut, checkIn).
+		Find(&modelList).Error
+
 	if err != nil {
 		return nil, err
 	}
-	
-var result []domain.Booking
-for i := range modelList {
-	result = append(result, *toDomain(&modelList[i]))	
+
+	result := make([]domain.Booking, 0, len(modelList))
+	for i := range modelList {
+		result = append(result, *toDomain(&modelList[i]))
+	}
+
+	return result, nil
 }
-return result, nil
+func (r *BookingRepository) UpdatePaymentStatusTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	id uint,
+	status domain.PaymentStatus,
+) error {
+	return tx.WithContext(ctx).
+		Model(&models.Booking{}).
+		Where("id = ?", id).
+		Update("payment_status", string(status)).Error
 }
 
-func (r *BookingRepository) UpdatePaymentStatusTx(tx *gorm.DB, id uint, status domain.PaymentStatus) error {
-	return tx.Model(&models.Booking{}).Where("id = ?", id).Update("payment_status", string(status)).Error
-}
-
-func (r *BookingRepository) UpdatePaymentStatus(id uint, status domain.PaymentStatus) error {
-	return r.db.Transaction(func (tx *gorm.DB) error {
-		return r.UpdatePaymentStatusTx(tx, id, status)
+func (r *BookingRepository) UpdatePaymentStatus(
+	ctx context.Context,
+	id uint,
+	status domain.PaymentStatus,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.UpdatePaymentStatusTx(ctx, tx, id, status)
 	})
-
 }
 
-func (r *BookingRepository) WithTransaction(fn func(tx domain.Repository) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *BookingRepository) WithTransaction(
+	ctx context.Context,
+	fn func(tx domain.Repository) error,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := &BookingRepository{db: tx}
 		return fn(txRepo)
 	})
-}  
-
-func (r *BookingRepository) LockRoom(roomID uint) error {
-	
-	var room room.Room
-
-	return  r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", roomID).First(&room).Error
 }
 
+func (r *BookingRepository) LockRoom(ctx context.Context, roomID uint) error {
+	var room room.Room
 
-func (r *BookingRepository) FindExpiredBookings(now time.Time) ([]domain.Booking, error) {
+	return r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", roomID).
+		First(&room).Error
+}
+
+func (r *BookingRepository) FindExpiredBookings(
+	ctx context.Context,
+	now time.Time,
+) ([]domain.Booking, error) {
 
 	var modelsList []models.Booking
 
-	err := r.db.
+	err := r.db.WithContext(ctx).
 		Where("status = ? AND expires_at < ?", "PENDING", now).
 		Find(&modelsList).Error
 
@@ -202,12 +235,10 @@ func (r *BookingRepository) FindExpiredBookings(now time.Time) ([]domain.Booking
 	}
 
 	result := make([]domain.Booking, 0, len(modelsList))
-
 	for i := range modelsList {
 		result = append(result, *toDomain(&modelsList[i]))
 	}
 
 	return result, nil
 }
-
 
