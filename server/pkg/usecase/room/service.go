@@ -275,7 +275,7 @@ func (s *Service) withRoomLock(
 	var err error
 
 	for i := 0; i < 3; i++ {
-		unlock, err = s.redisLocker.LockResource(ctx, "room", roomID, 3*time.Second)
+		unlock, err = s.redisLocker.LockResource(ctx, "room", fmt.Sprintf("%d", roomID), 3*time.Second)
 		if err == nil {
 			break
 		}

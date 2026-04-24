@@ -2,8 +2,8 @@ package redis
 
 import (
 	"context"
-	
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,14 +17,15 @@ type RedisLocker struct {
 func NewRedisLocker(client *redis.Client) *RedisLocker {
 	return &RedisLocker{client: client}
 }
+
 func (r *RedisLocker) LockResource(
 	ctx context.Context,
 	resource string,
-	id uint,
+	id string,
 	expiry time.Duration,
 ) (func(), error) {
 
-	key := fmt.Sprintf("%s:%d", resource, id)
+	key := fmt.Sprintf("%s:%s", resource, id)
 	token := uuid.NewString()
 
 	res, err := r.client.SetArgs(ctx, key, token, redis.SetArgs{
@@ -36,15 +37,15 @@ func (r *RedisLocker) LockResource(
 	}
 
 	if res != "OK" {
-		return nil, fmt.Errorf("resource %s:%d is locked", resource, id)
+		return nil, fmt.Errorf("resource %s is locked", key)
 	}
 
-	//  heartbeat control
 	stopChan := make(chan struct{})
+	var once sync.Once
 
-	//  Start TTL refresh goroutine
+	// 🔁 Heartbeat (TTL refresh)
 	go func() {
-		ticker := time.NewTicker(expiry / 2) // refresh before expiry
+		ticker := time.NewTicker(expiry / 2)
 		defer ticker.Stop()
 
 		script := `
@@ -59,7 +60,7 @@ func (r *RedisLocker) LockResource(
 			select {
 			case <-ticker.C:
 				_, err := r.client.Eval(
-					context.Background(),
+					ctx, //  use request context
 					script,
 					[]string{key},
 					token,
@@ -67,7 +68,8 @@ func (r *RedisLocker) LockResource(
 				).Result()
 
 				if err != nil {
-					// optional: log error
+					// optional: log
+					fmt.Printf("heartbeat failed for %s: %v\n", key, err)
 				}
 
 			case <-stopChan:
@@ -75,27 +77,30 @@ func (r *RedisLocker) LockResource(
 			}
 		}
 	}()
-		unlock := func() {
-		close(stopChan) // stop heartbeat
 
-		script := `
-		if redis.call("GET", KEYS[1]) == ARGV[1] then
-			return redis.call("DEL", KEYS[1])
-		else
-			return 0
-		end
-		`
+	unlock := func() {
+		once.Do(func() { //  prevent double close
+			close(stopChan)
 
-		_, err := r.client.Eval(
-			context.Background(),
-			script,
-			[]string{key},
-			token,
-		).Result()
+			script := `
+			if redis.call("GET", KEYS[1]) == ARGV[1] then
+				return redis.call("DEL", KEYS[1])
+			else
+				return 0
+			end
+			`
 
-		if err != nil {
-			fmt.Printf("failed to release lock: %v\n", err)
-		}
+			_, err := r.client.Eval(
+				ctx, //  use same context
+				script,
+				[]string{key},
+				token,
+			).Result()
+
+			if err != nil {
+				fmt.Printf("failed to release lock %s: %v\n", key, err)
+			}
+		})
 	}
 
 	return unlock, nil
